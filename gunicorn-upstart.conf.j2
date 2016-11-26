@@ -1,0 +1,11 @@
+description "Gunicorn server for {{ inventory_hostname }}"
+
+start on net-device-up
+stop on shutdown
+
+respawn
+
+setuid parentj
+chdir /home/parentj/sites/{{ inventory_hostname }}/source
+
+exec /home/parentj/sites/{{ inventory_hostname }}/virtualenv/bin/gunicorn --bind unix:/tmp/{{ inventory_hostname }}.socket {{ inventory_hostname }}.wsgi:application
