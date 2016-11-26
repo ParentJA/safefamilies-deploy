@@ -1,40 +1,82 @@
 ---
+- hosts: all
+  become: yes
+  tasks:
+
+    - name: make sure required packages are installed
+      apt: pkg=python-pip,python-dev,libpq-dev,nginx,git,nodejs,npm,libjpeg-dev,zlib1g-dev
 
 - hosts: all
-  sudo: yes
-  tasks: 
-    - name: make sure required packages are installed
-      apt: pkg=python-pip,python-dev,libpq-dev,postgresql,postgresql-contrib,nginx,git,nodejs,npm
+  become: yes
+  vars:
+    source_dir: /home/parentj/sites/dc127resources.org/source
+    static_dir: /home/parentj/sites/dc127resources.org/static
+    virtualenv_dir: /home/parentj/sites/dc127resources.org/virtualenv
+  tasks:
+
+    - name: create directory structure if necessary
+      file: path=/home/parentj/sites/dc127resources.org/{{ item }} state=directory mode=0755
+      with_items:
+        - database
+        - media
+        - source
+        - static
+        - virtualenv
+
+    - name: get latest source
+      git: repo=https://github.com/ParentJA/safefamilies.git dest={{ source_dir }}
+    
     - name: make sure virtualenv is installed
       command: pip install virtualenv
+
+    - name: install requirements
+      pip: requirements={{ source_dir }}/requirements/production.txt virtualenv={{ virtualenv_dir }} virtualenv_python=python2.7
+
+    - name: update static files
+      django_manage: command="collectstatic --noinput" app_path={{ source_dir }} settings=settings.production virtualenv={{ virtualenv_dir }}
+
+    - name: update database
+      django_manage: command="migrate --noinput" app_path={{ source_dir }} settings=settings.production virtualenv={{ virtualenv_dir }}
+
+- hosts: all
+  become: yes
+  vars: 
+    inventory_hostname: dc127resources.org
+  tasks:
+
     - name: allow long hostnames in nginx
       lineinfile:
         dest=/etc/nginx/nginx.conf
         regexp='(\s+)#? ?server_names_hash_bucket_size'
         backrefs=yes
         line='\1server_names_hash_bucket_size 64;'
+
     - name: add nginx config to sites-available
       template: src=./nginx.conf.j2
                 dest=/etc/nginx/sites-available/{{ inventory_hostname }}
       notify:
-        - restart nginx
+          - restart nginx
+
     - name: add symlink in nginx sites-enabled
       file: src=/etc/nginx/sites-available/{{ inventory_hostname }}
-            dest=/etc/nginx/sites-enabled/{{ inventory_hostname }}
-            state=link
+            dest=/etc/nginx/sites-enabled/{{ inventory_hostname }} state=link
       notify:
-        - restart nginx
+          - restart nginx
+
     - name: write gunicorn init script
       template: src=./gunicorn-upstart.conf.j2
                 dest=/etc/init/gunicorn-{{ inventory_hostname }}.conf
       notify:
-        - restart gunicorn
+          - restart gunicorn
+
     - name: make sure nginx is running
       service: name=nginx state=running
     - name: make sure gunicorn is running
       service: name=gunicorn-{{ inventory_hostname }} state=running
+
   handlers:
     - name: restart nginx
       service:  name=nginx state=restarted
+
     - name: restart gunicorn
       service:  name=gunicorn-{{ inventory_hostname }} state=restarted
